@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Simply</title>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <script src="http://simply.sanvois.in:4426/socket.io/socket.io.js"></script>
+        <script src="keyboard.js"></script>
+        <script type="text/javascript">
+var simply=(function(){
+    var my={};
+    var PAQ_CLIENTOK='a';
+    var PAQ_CLIENTIN='b';
+    var PAQ_CLIENTINACK='k';
+    var PAQ_CLIENTOUT='c';
+    var PAQ_CLIENTLIST='d';
+    var PAQ_GAMESOON='e';
+    var PAQ_GAMELETTRE='f';
+    var PAQ_GAMENEEDPLAYERS='g';
+    var PAQ_GAMEINPROGRESS='h';
+    var PAQ_PLAYERDEAD='i';
+    var PAQ_PLAYERWIN='j';
+    
+    var cars=[];
+    var joueurs=[];
+    var waitfor={};
+    var mort=true,jeuencours=false;
+    var nb_lettres=0;
+    var ligne1=' - simply - ',ligne2='10 fingers',ligne3='10 hands',ligne4='10 eyes',ligne5='base 2 digit actually',
+    ligne6='1-click the cell',ligne7='2-type the letter in it',ligne8='be fast and accurate';
+    var int_id;
+    var joueur_local={};
+    var chiffres=[
+        ['00','10','20','01','21','02','22','03','23','04','14','24'],
+        ['10','01','11','12','13','04','14','24'],
+        ['00','10','20','21','02','12','22','03','04','14','24'],
+        ['00','10','20','21','12','12','23','04','14','24'],
+        ['20','11','02','22','03','13','23','24'],
+        ['00','10','20','01','02','12','22','23','04','14','24'],
+        ['00','10','20','01','02','12','22','03','23','04','14','24'],
+        ['00','10','20','21','12','03','04'],
+        ['00','10','20','01','21','02','12','22','03','23','04','14','24'],
+        ['00','10','20','01','21','02','12','22','23','04','14','24']
+    ];
+    var tdr_start,tdr_int,tdr_stop;
+    var stats=[];
+    var nb_ready=0;
+    
+    function message(texte){
+        document.getElementById('message').innerHTML=texte;
+        console.log("message:"+texte);
+    }
+    function addPlayer(joueur){
+        joueurs[joueur.id]=joueur;
+        if(document.getElementById(joueur.id)){
+            var opt=document.getElementById(joueur.id);
+            opt.parentNode.removeChild(opt);
+        }
+        var o=document.createElement('div');
+        o.innerHTML=joueur.pseudo+' - '+joueur.score;
+        o.id=joueur.id;
+        document.getElementById('liste').appendChild(o);
+    }
+    function delPlayer(joueur){
+        delete joueurs[joueur.id];
+        var opt=document.getElementById(joueur.id);
+        opt.parentNode.removeChild(opt);
+        //console.log(opt);
+    }
+    my.connexion=function(){
+        var pseudo=document.getElementById('cp_login').value;
+        socket.emit(PAQ_CLIENTIN,pseudo);
+        message("Player "+pseudo+" created");
+        document.getElementById('cp_login').blur();
+        return false;
+    };
+    function buildTable(){
+        var t=document.getElementById('zone');
+        for(var y=0;y<26;y++){
+            var row=document.createElement('tr');
+            for(var x=0;x<26;x++){
+                var cell=document.createElement('td');
+                //cell.innerHTML='&nbsp;';
+                cell.id=String.fromCharCode(x+65)+String.fromCharCode(y+65);
+                cell.onmousedown=gereClic;
+                row.appendChild(cell);
+                if(y===1 && x>0 && x<=ligne1.length){ cell.innerHTML=ligne1.charAt(x-1);cell.className='on2'; }
+                if(y===3 && x>0 && x<=ligne2.length){ cell.innerHTML=ligne2.charAt(x-1);cell.className='on2'; }
+                if(y===4 && x>0 && x<=ligne3.length){ cell.innerHTML=ligne3.charAt(x-1);cell.className='on2'; }
+                if(y===5 && x>0 && x<=ligne4.length){ cell.innerHTML=ligne4.charAt(x-1);cell.className='on2'; }
+                if(y===6 && x>0 && x<=ligne5.length){ cell.innerHTML=ligne5.charAt(x-1);cell.className='on2'; }
+                if(y===10 && x>0 && x<=ligne6.length){ cell.innerHTML=ligne6.charAt(x-1);cell.className='htp'; }
+                if(y===12 && x>0 && x<=ligne7.length){ cell.innerHTML=ligne7.charAt(x-1);cell.className='htp'; }
+                if(y===14 && x>0 && x<=ligne8.length){ cell.innerHTML=ligne8.charAt(x-1);cell.className='on2'; }
+            }
+            t.appendChild(row);
+        }
+    }
+    function setScore(score,droite){
+        for(var i=0;i<(score).toString().length;i++){
+            showdigit(String.fromCharCode((i*4)+66)+'U',(score).toString().charAt(i));
+        }
+    }
+    function setNbLettres(){
+        var nb=nb_lettres.toString();
+        for(var y=20;y<26;y++){
+            for(var x=87-((nb.length-1)*4)-65;x<26;x++){
+                var cell=document.getElementById(String.fromCharCode(x+65)+String.fromCharCode(y+65));
+                cell.className='';
+            }
+        }
+        for(var index=nb.length-1;index>=0;index--){
+            var coord=String.fromCharCode(87-(index*4))+'U';
+            //console.log(coord);
+            showdigit(coord,nb.charAt(nb.length-1-index));
+        }
+    }
+    function showdigit(orig,chiffre){
+        var coord;
+        for(var index in chiffres[chiffre]){
+            coord=chiffres[chiffre][index];
+            x=String.fromCharCode(orig.charCodeAt(0)+parseInt(coord.charAt(0)));
+            y=String.fromCharCode(orig.charCodeAt(1)+parseInt(coord.charAt(1)));
+            //document.getElementById(x+y).style.backgroundColor='#444';
+            document.getElementById(x+y).className='score';
+        }
+    }
+    function clearTable(){
+        for(var y=0;y<26;y++){
+            for(var x=0;x<26;x++){
+                var cell=document.getElementById(String.fromCharCode(x+65)+String.fromCharCode(y+65));
+                cell.innerHTML='';
+                cell.className='';
+            }
+        }
+        setScore(joueur_local.score);
+    }
+    function caseOn(info){
+        var cell=document.getElementById(info.x+info.y);
+        cell.className='on';
+        cell.innerHTML=info.lettre;
+        cell._pos=0;
+        //calcul temps de réponse
+        tdr_start=new Date().getTime();
+        //gestion de l'affichage du decompte
+        cell._near={};
+        for(var x=-1;x<2;x++){
+            for(var y=-1;y<2;y++){
+                if(!(x===0 && y===0)){
+                    var cell2=document.getElementById(getCoord(cell.id,x,y))||{};
+                    cell2.className='on';
+                    cell._near[x+''+y]=cell2;
+                }
+            }
+        }
+        var interval=Math.floor(info.duree/10);
+        clearInterval(int_id);
+        int_id=window.setInterval(downBack,interval,cell);
+    }
+    function downBack(cell){
+        //console.log(bp+' '+bp.substring(0,bp.indexOf('p')));
+        //cell.style.backgroundPosition='0px '+(cell._pos+=2)+'px';
+        cell._pos+=2;
+        if(cell._pos===2) cell._near['-1-1'].className='';
+        else if(cell._pos===4) cell._near['-10'].className='';
+        else if(cell._pos===6) cell._near['-11'].className='';
+        else if(cell._pos===8) cell._near['01'].className='';
+        else if(cell._pos===10) cell._near['11'].className='';
+        else if(cell._pos===12) cell._near['10'].className='';
+        else if(cell._pos===14) cell._near['1-1'].className='';
+        else if(cell._pos===16) cell._near['0-1'].className='';
+        else if(cell._pos===18) cell.className='';
+        
+        if(cell._pos>21)
+            clearInterval(int_id);
+        //cell.style.backgroundPosition=(parseInt(cell.style.backgroundPosition)+1)+'px 0px';
+    }
+    function getCoord(coord,x_decal,y_decal){
+       var x=coord.charCodeAt(0);var y=coord.charCodeAt(1);
+       return String.fromCharCode(x+x_decal)+String.fromCharCode(y+y_decal);
+    }
+    function gereClic(e){
+        ///console.log(e.target.offsetLeft+' '+e.target.offsetTop);
+        if(jeuencours===true){
+            if(e.target.innerHTML!==''){
+                waitfor={'lettre':e.target.innerHTML,'cell':e.target};
+                e.target.className='on2';
+                tdr_int=new Date().getTime()-tdr_start;
+                clearInterval(int_id);
+                for(var x=-2;x<3;x++)
+                    for(var y=-2;y<3;y++)
+                        if(!(x===0 && y===0)){
+                            (document.getElementById(getCoord(e.target.id,x,y))||{}).className='htp';
+                        }
+            }else{
+                dead();
+                e.target.className='dead';
+            }
+        }else{
+
+        }
+    }
+    function carTirage(info){
+        return window.setTimeout(dead,info.duree);
+    }
+    function dead(){
+        if(mort===false && jeuencours===true && nb_lettres>0){
+            mort=true;
+            socket.emit(PAQ_PLAYERDEAD);
+            message("Game over");
+            waitfor={};
+        }
+    }
+    function makeWin(joueur){
+        var liste=document.getElementById('liste');
+        for(var index;index<liste.childNodes.length;index++){
+            if(liste.childNodes[index].innerHTML!==undefined){
+                liste.childNodes[index].className='';
+            }
+        }
+        var opt=document.getElementById(joueur.id);
+        opt.className='winner';
+        opt.innerHTML=joueur.pseudo+' - '+joueur.score;
+        if(joueur.id===joueur_local.id){
+            joueur_local.score=joueur.score;
+            clearTable();
+        }
+    }
+    function tue(joueur){
+        var opt=document.getElementById(joueur.id);
+        opt.className='dead';
+    }
+    function captureClavier(e,key,combo){
+        console.log(e+' '+key+' '+combo);
+        if('lettre' in waitfor){
+            if(waitfor.lettre===key.toString().toUpperCase()){
+                tdr_stop=new Date().getTime()-tdr_start;
+                showStats({'lettre':waitfor.lettre,'tdr1':tdr_int,'tdr2':tdr_stop});
+                var cle_car=waitfor.lettre+waitfor.cell.id;
+                if(cle_car in cars){
+                    window.clearTimeout(cars[cle_car]);
+                    delete cars[cle_car];
+                    window.clearInterval(int_id);
+                    waitfor.cell.innerHTML='';
+                    waitfor.cell.className='';
+                }
+            }else{
+                waitfor.cell.className='dead';
+                dead();
+            }
+        }else{
+            console.log('waitfor is mpty');
+        }
+    }
+    function showStats(dernier){
+        stats.unshift(dernier);
+        if(stats.length>5)
+            stats.pop();
+        //on met a jour le tableau
+        var moyenne=0;
+        for(var cle in stats){
+            var ligne=document.getElementById("stat"+cle);
+            ligne.childNodes[0].innerHTML=stats[cle].lettre;
+            ligne.childNodes[1].innerHTML=stats[cle].tdr1;
+            ligne.childNodes[2].innerHTML=stats[cle].tdr2;
+            moyenne+=stats[cle].tdr2;
+            if(!('best' in joueur_local) || stats[cle].tdr1<joueur_local.best)
+                joueur_local.best=stats[cle].tdr1;
+        }
+        moyenne/=stats.length;
+        document.getElementById('moyenne').innerHTML='<u>Reaction time</u><br/>Best<br/><span>'+joueur_local.best+' ms</span><br/>Mean<br/><span>'+Math.round(moyenne)+' ms</span>';
+    }
+    if(typeof io!=='undefined'){
+        var socket = io.connect('http://simply.sanvois.in:4426');
+        socket.on(PAQ_CLIENTOK, function () {
+          console.log('Connected');
+          message("Server connected. Enter your name.");
+          document.getElementById('liste').innerHTML='';
+        });
+        socket.on(PAQ_CLIENTIN, function (joueur) {
+          console.log('New player '+joueur);
+          addPlayer(joueur);
+        });
+        socket.on(PAQ_CLIENTINACK, function (joueur) {
+          console.log('You are '+joueur.pseudo);
+          joueur_local=joueur;
+          setScore(joueur.score);
+        });
+        socket.on(PAQ_CLIENTOUT,function(joueur){
+           console.log('Player out '+joueur.pseudo);
+           delPlayer(joueur);
+        });
+        socket.on(PAQ_GAMESOON,function(){
+           message("Get ready!");
+           mort=false;
+           nb_lettres=0;
+           nb_ready++;
+           jeuencours=false;
+           if(nb_ready===1){
+               clearTable();
+               for(var x=0;x<ligne6.length;x++){
+                  var cell=document.getElementById(String.fromCharCode(x+66)+'B');
+                  cell.innerHTML=ligne6.charAt(x);cell.className='on2';
+               }
+           }else if(nb_ready===2){
+               for(var x=0;x<ligne7.length;x++){
+                  var cell=document.getElementById(String.fromCharCode(x+66)+'D');
+                  cell.innerHTML=ligne7.charAt(x);cell.className='on2';
+               }
+           }else if(nb_ready===3){
+                var liste=document.getElementById('liste');
+               for(var index=0;index<liste.childNodes.length;index++){
+                    liste.childNodes[index].className='';
+                }
+           }
+                   
+        });
+        socket.on(PAQ_GAMENEEDPLAYERS,function(){
+           message("Waiting for players"); 
+        });
+        socket.on(PAQ_GAMELETTRE,function(tirage){
+            if(jeuencours===false && nb_lettres===0){
+                jeuencours=true;
+                cars={};
+                clearTable();
+                nb_ready=0;
+            }
+           console.log(tirage.lettre+' '+tirage.duree+' '+tirage.x+' '+tirage.y); 
+           if(jeuencours===true){
+               nb_lettres++;
+               setNbLettres();
+               caseOn(tirage);
+               cars[tirage.lettre+tirage.x+tirage.y]=carTirage(tirage);
+           }
+        });
+        socket.on(PAQ_PLAYERWIN,function(joueur){
+            if(jeuencours===true){
+                jeuencours=false;
+                message(joueur.pseudo+' WINS!');
+                makeWin(joueur);
+                nb_ready=0;
+            }
+        });
+        socket.on(PAQ_PLAYERDEAD,function(joueur){
+            if(jeuencours===true){
+                message(joueur.pseudo+' is dead');
+                tue(joueur);
+            }
+        });
+    }else{
+        
+    }
+    KeyboardJS.on('a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z', captureClavier);
+    window.onload=buildTable;
+    return my;
+}());
+        </script>
+        <style type="text/css">
+            *{ font-family:Verdana;font-size:10px; }
+            body,html{ margin:0;padding:0; }
+            form{ line-height:26px;  }
+            input{ width:180px;text-align:center; }
+            #message{float:left;width:210px;line-height:26px;}
+            #centre{margin-left:auto;margin-right:auto;width:900px;margin-top:26px; }
+            #zone{ float:left;margin-right:4px; }
+            #zone td{ height:20px;width:20px;background-color: #AAA;cursor: crosshair;border:1px solid #AAA;text-align: center;color:#FFF; }
+            #zone td:hover{ border:1px solid #88F;background-color: #DDF; }
+            #zone td.on{ background-color:#66E;font-size:12px; }
+            #zone td.on2{ background-color:#FFF;color:#000;font-weight: bold;font-size:12px; }
+            #zone td.htp{ background-color:#BFB;color:#000;font-weight: bold;font-size:12px; }
+            #zone td.dead{ background-color:#cc0000; }
+            #zone td.score{ background-color:#444; }
+            #stats{ float:left; width:180px; height:100px;border:1px solid #aaa;padding:1px;margin-top:1px;overflow:hidden; }
+            #moyenne{ text-align:center; }
+            #moyenne span{ font-size:12px;color:#48d; }
+            #liste{ float:left; width:180px; height:514px;border:1px solid #aaa;padding:1px;margin-top:1px;overflow: auto; }
+            #liste div.winner{ color:#00cc33;font-weight:bold; }
+            #liste div.dead{ text-decoration:line-through; }
+            td{ -moz-transition: all 200ms ease;-webkit-transition: all 200ms ease;-ms-transition: all 200ms ease;-o-transition: all 200ms ease;
+            -webkit-user-select: none; -moz-user-select: none; -khtml-user-select: none; -o-user-select: none;}
+            a{color:#AAA;}
+        </style>
+    </head>
+    <body>
+        <div id="centre">
+            <table id="zone"></table>
+            <div id="message">...</div>
+            <form onsubmit="return simply.connexion();"><input type="text" id="cp_login" maxlength="25" /></form>
+            <div id="stats">
+                <table style="height:82px">
+                    <tr>
+                        <td width="50%">
+                            <table border="0">
+                                <tr id="stat0"><td></td><td></td><td></td></tr>
+                                <tr id="stat1"><td></td><td></td><td></td></tr>
+                                <tr id="stat2"><td></td><td></td><td></td></tr>
+                                <tr id="stat3"><td></td><td></td><td></td></tr>
+                                <tr id="stat4"><td></td><td></td><td></td></tr>
+                            </table>
+                        </td>
+                        <td width="50%"><div id="moyenne"></div></td>
+                    </tr>
+                </table>
+            </div>
+            <div id="liste"></div>
+            <div style="clear: both;padding-top:26px;">"Simply" was initially a game made for the 26th edition of <a href="http://www.ludumdare.com">#LD48</a> event.
+                Theme was "minimalism".<br/>
+                Finished too late it was submitted for the <a href="http://www.onegameamonth.com">#1GAM</a> challenge.<br/>
+            It uses Javascript/DOM/Socket.IO/Node.js and was made by <a href="http://twitter.com/CoOz">@CoOz</a>.</div>
+        </div>
+<script>
+</script>
+    </body>
+</html>
