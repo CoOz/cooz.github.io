@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>The Line</title>
+	<style type="text/css">
+	body,html{ margin:0;padding:0; }
+	</style>
+	<script type="text/javascript" src="easeljs-0.8.2.min.js"></script>
+	<script type="text/javascript" src="tweenjs-0.6.2.min.js"></script>
+	<script type="text/javascript" src="md5.js"></script>
+	<meta charset="utf-8">
+<script>
+ZONE_WIDTH = 32;
+ZONE_HEIGHT = 16;
+TILE_WIDTH = 32;
+
+ZONE_TOTAL_WIDTH = ZONE_WIDTH * TILE_WIDTH;
+ZONE_TOTAL_HEIGHT = ZONE_HEIGHT * TILE_WIDTH;
+
+START_UP = 200;
+
+METALS = {
+    2 : {'Bismuth':15},
+    4 : {'Mercury':14,'Tellurium':13},
+    7 : {'Indium':12,'Gallium':11,'Silver':10,'Beryllium':9},
+    11 : {'Germanium':8,'Ruthenium':7,'Rhenium':6,'Osmium':5},
+    19 : {'Iridium':4,'Palladium':3,'Gold':2},
+    35 : {'Platinium':1,'Rhodium':1},
+};
+ROCKS_PC={
+    2:1, 4:2, 7:4, 11:6, 19:8, 35:11,
+};
+
+var stage;
+var current_zones = {}
+var central_zone = { 'x_world':0,'y_world':0 };
+var keys_pressed = {} ;
+var digger;
+var digger_is_moving = false;
+var digger_speed = 8;
+var is_pressing = false;
+var obstacle_x, obstacle_y =null;
+var zone_x,zone_y,current_zone_x,current_zone_y;
+
+String.prototype.replaceAll = function(search, replacement) {
+    var target = this;
+    return target.replace(new RegExp(search, 'g'), replacement);
+};
+
+function zone_key(x,y){
+    return x+"."+y;
+}
+
+function init() {
+	stage = new createjs.Stage("surface");
+	/*var zone = new Zone(0,0);
+	stage.addChild(zone.zone_cont);
+	central_zone = zone;
+	stage.update();*/
+	draw_zones();
+	digger = new createjs.Bitmap("digger.png");
+	digger.x=32*10+16;
+	digger.y=START_UP+16;
+	digger.regX= digger.regY=16;
+	stage.addChild(digger);
+
+    createjs.Ticker.addEventListener("tick", tick);
+    createjs.Ticker.setFPS(60);
+
+	this.document.onkeydown = keydown;
+    this.document.onkeyup = keyup;
+}
+
+function keydown(event) {
+    keys_pressed[event.keyCode] = true;
+}
+
+function keyup(event) {
+    delete keys_pressed[event.keyCode];
+}
+
+
+function tick() {
+	is_pressing = false;
+    if (keys_pressed[37]){
+    	check_movement();
+    	//stage.x += 4;
+    	digger.rotation= 90;
+		if(can_pass()){
+    		digger.x-=digger_speed;
+    		stage.x+=digger_speed;
+    	}
+    	console.log(digger.x+" "+digger.y);
+    } 
+    if (keys_pressed[38]){
+    	check_movement();
+    	digger.rotation= 180;
+    	if(can_pass()){
+    		digger.y -= digger_speed;
+    		stage.y += digger_speed;
+    	}
+    }
+    if (keys_pressed[39]){
+    	check_movement();
+    	digger.rotation= 270;
+    	if(can_pass()){
+    		digger.x += digger_speed;
+    		stage.x -= digger_speed;
+    	}
+    }
+    if (keys_pressed[40]){
+    	check_movement();
+    	digger.rotation= 0;
+    	if(can_pass()){
+    		digger.y += digger_speed;
+    		stage.y -= digger_speed;
+    	}
+    }
+    if(is_pressing==false && digger_is_moving==true){
+    	snap_to_grid();
+    	digger_is_moving=false;
+		hit_tile();
+    }
+    stage.update();
+}
+
+function check_movement(){
+    get_central_zone();
+	zone_x=parseInt((digger.x)/ZONE_TOTAL_WIDTH);
+	zone_y=parseInt((digger.y)/ZONE_TOTAL_HEIGHT);
+	console.log("zone ("+zone_x+" "+zone_y+")");
+	is_pressing = true;
+	current_zone_x = parseInt((digger.x)/TILE_WIDTH)-(zone_x*ZONE_TOTAL_WIDTH/TILE_WIDTH);
+	current_zone_y = parseInt((digger.y-START_UP)/TILE_WIDTH);
+	hit_tile();
+	if(digger_is_moving==false){
+		snap_to_grid();
+		digger_is_moving=true;
+	}
+}
+
+function can_pass(){
+	if(digger.rotation==0){
+		obstacle_x=current_zone_x;
+		obstacle_y=current_zone_y+1;
+	}else if(digger.rotation==180){
+		obstacle_x=current_zone_x;
+		obstacle_y=current_zone_y-1;
+	}else if(digger.rotation==270){
+		obstacle_x=current_zone_x+1;
+		obstacle_y=current_zone_y;
+	}else if(digger.rotation==90){
+		obstacle_x=current_zone_x-1;
+		obstacle_y=current_zone_y;
+	}
+	console.log("obs="+obstacle_x+","+obstacle_y+" for "+current_zone_x+","+current_zone_y);
+	obstacle=get_current_zone().get_tile(obstacle_x,obstacle_y);
+	if(obstacle!='r'){
+		return true;
+	}else{
+		return false;
+	}
+}
+
+function get_current_zone(){
+	return current_zones[zone_key(zone_x,zone_y)];
+}
+
+function snap_to_grid(){
+	var decalage_x = stage.x%TILE_WIDTH;
+	if(decalage_x>TILE_WIDTH/2){
+		stage.x+=TILE_WIDTH-decalage_x;
+		digger.x-=TILE_WIDTH-decalage_x;
+	}else{
+		stage.x-=decalage_x;
+		digger.x+=decalage_x;
+	}
+	var decalage_y = stage.y%TILE_WIDTH;
+	if(decalage_y>TILE_WIDTH/2){
+		stage.y+=TILE_WIDTH-decalage_y;
+		digger.y-=TILE_WIDTH-decalage_y;
+	}else{
+		stage.y-=decalage_y;
+		digger.y+=decalage_y;
+	}
+}
+
+function hit_tile(){
+	current_zones[zone_key(zone_x,zone_y)].dig_tile(current_zone_x,current_zone_y);
+}
+
+function draw_zones(){
+	console.log("redraw zones");
+	cles_map = [];
+	for(var x=central_zone.x_world-1;x<=central_zone.x_world+1;x++){
+		for(var y=central_zone.y_world-1;y<=central_zone.y_world+1;y++){
+			console.log(x+" "+y);
+			if(y>=0){
+				console.log("build?"+zone_key(x,y));
+				if(!(zone_key(x,y) in current_zones)){
+					draw_zone(x,y);
+				}
+				cles_map[zone_key(x,y)]=true;
+				console.log("aaa "+x+" "+y);
+			}
+		}
+	}
+	stage.update();
+	for(cle in current_zones){
+		if(!(cle in cles_map)){
+			console.log(stage.removeChild(current_zones[cle].zone_cont));
+			current_zones[cle] = null;
+			delete(current_zones[cle]);
+			console.log(current_zones);
+		}
+	}
+}
+
+function draw_zone(x_world,y_world){
+	console.log("Draw zone "+x_world+"  "+y_world);
+	var zone = new Zone(x_world,y_world);
+	stage.addChild(zone.zone_cont);
+}
+
+function get_central_zone(){
+    attended_x = parseInt(stage.x / (ZONE_TOTAL_WIDTH) *-1);
+    attended_y = parseInt(stage.y / (ZONE_TOTAL_HEIGHT) *-1);
+    //console.log(attended_x + " " +attended_y);
+
+    if(zone_key(attended_x,attended_y) in current_zones){
+    	//console.log(current_zones[zone_key(attended_x,attended_y)]);
+    	if(central_zone.zone_key != zone_key(attended_x,attended_y)){
+    		central_zone = current_zones[zone_key(attended_x,attended_y)];
+    		draw_zones();
+    	}
+	}
+}
+
+var Zone = function(x_world,y_world){
+	this.x_world = x_world;
+	this.y_world = y_world;
+	this.zone_cont = new createjs.Container();
+	this.zone_cont.x = x_world * ZONE_WIDTH * TILE_WIDTH;
+	this.zone_cont.y = y_world * ZONE_HEIGHT * TILE_WIDTH+START_UP;
+	this.zone_string = "";
+	console.log("New zone @ "+this.zone_cont.x+" "+this.zone_cont.y);
+	this.zone_key = zone_key(x_world,y_world);
+
+	//var corner = new createjs.Shape();
+	//corner.graphics.beginStroke("#000000").drawRect(0,0,TILE_WIDTH*ZONE_WIDTH,TILE_WIDTH*ZONE_HEIGHT);
+	//this.zone_cont.addChild(corner);
+    for(i=0;i<ZONE_HEIGHT;i++){
+        digest = md5(this.x_world +" "+this.y_world+" "+this.zone_string.length);
+    	this.zone_string+=digest;
+	}
+	//Get the metals for this depth
+	for(metal_depth in METALS){
+		this.metals = METALS[metal_depth];
+		if(metal_depth>=this.y_world){
+			break;
+		}
+	}
+	console.log(this.metals);
+	//Get the rocks percentage for this depth
+	for(rocks_pc in ROCKS_PC){
+		this.rocks_pc = ROCKS_PC[rocks_pc];
+		if(rocks_pc>=this.y_world){
+			break;
+		}
+	}
+	console.log("rocks_pc "+this.rocks_pc);
+	//Add rocks to zone_string
+	for(i=0;i<this.rocks_pc;i++){
+		this.zone_string = this.zone_string.replaceAll(i.toString(16),'r');
+	}	
+	console.log(this.zone_string);
+
+	//Draw the tiles
+	var zone_tile = new createjs.Shape();
+	var current_letter,tile;
+	for(y=0;y<ZONE_HEIGHT;y++){
+		for(x=0;x<ZONE_WIDTH;x++){
+			current_letter = this.zone_string.charAt(x+y*ZONE_WIDTH);
+			//tile = new createjs.Shape();
+
+			fill_color = "#DDD";
+			tint = 128+parseInt(current_letter,16)*3;
+			//console.log(tint + " "+tint.toString(16));
+			fill_color = "#"+tint.toString(16)+tint.toString(16)+tint.toString(16);
+
+			if(current_letter=='r')
+				fill_color = "#333";
+
+			//tile.graphics.beginFill(fill_color).drawRect(x*TILE_WIDTH,y*TILE_WIDTH,TILE_WIDTH,TILE_WIDTH);
+			//zone_tile.graphics.beginFill(fill_color).drawRect(x*TILE_WIDTH,y*TILE_WIDTH,TILE_WIDTH,TILE_WIDTH);
+			this.color_tile(x,y,zone_tile,fill_color);
+			//this.zone_cont.addChild(tile);
+		}
+	}
+	this.zone_cont.addChildAt(zone_tile,0);
+
+    /*#Draw the tiles
+    letter_index = 0
+    for y in range(0,ZONE_HEIGHT):
+        for x in range(0,ZONE_WIDTH):
+            tile = Tile(x,y,zone)
+            #tile.color = (255,0,0)
+            if rocks_string[letter_index] == 'r':
+                tile.set_rock(Rock("gold"))
+            zone.add(tile)
+            letter_index+=1*/
+
+
+	var text = new createjs.Text("Zone "+x_world+" "+y_world, "16px Arial", "#ff7700");
+	this.zone_cont.addChild(text);
+
+	current_zones[this.zone_key] = this;
+}
+Zone.prototype.color_tile = function(x, y, zone_tile, color){
+    var target = this;
+    console.log("color tile for "+x+" "+y+" "+color);
+    zone_tile.graphics.beginFill(color).drawRect(x*TILE_WIDTH,y*TILE_WIDTH,TILE_WIDTH,TILE_WIDTH);
+};
+
+Zone.prototype.get_tile = function(x, y){
+    var target = this;
+    console.log("get tile for "+x+" "+y+" "+target.zone_string.charAt(x+y*ZONE_WIDTH));
+    return target.zone_string.charAt(x+y*ZONE_WIDTH);
+};
+Zone.prototype.dig_tile = function(x, y){
+    var target = this;
+    console.log("dig tile for "+x+" "+y);
+    target.color_tile(x,y,target.zone_cont.getChildAt(0),"#5e4d3d");
+};
+
+</script>
+</head>
+<body onload="init();">
+<canvas id="surface" width=640 height=480></canvas>
+</body>
+</html>
