@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">
+<title>Water Tiny World</title>
+<style type="text/css">
+body{ background:#000; }
+div{ font-family:Verdana;font-size:12pt;color:#FFF; }
+#jeu{ width:444px; height:222px; border:1px solid #444;position:absolute; }
+</style>
+</head>
+<body>
+<div style="margin:auto;width:444px;"><canvas id="jeu"></canvas></div>
+<script type="text/javascript" src="js/caat.js"></script>
+<script type="text/javascript">
+(function(){
+	var anchor= [
+	    0,0,   50,0,   100,0,
+	    0,50,  50,50,  100,50,
+	    0,100, 50,100, 100,100
+	];
+	var ROULIS=44; // 1/roulis
+	var ROULISPHASE=5000; // 1/roulis
+	var VITESSEMAX=4;
+	var avance=false;
+	var scenesize=4444; 
+	var verslagauche=false;
+	var positionsoleil=50;
+	var NBNUAGES=44;
+	var FREINDEPLACEMENT=5;
+	var etat_tire=false;
+	var CANONTEMPSRECHARGE=2000;
+	var CANONDUREEFLAMME=1000;
+	var souris;
+	var niveau={
+		ovnis:{ intervalle:1000,tempsapproche:8000,max:1 }
+	}
+	var bouletsmap=[];
+	var pluiemap=[];
+	var sonpluie;var sonvent;
+	
+	var director = new CAAT.Director().initialize(444,222,document.getElementById('jeu'));
+	//scenes du jeu
+	var scene_menu=director.createScene();
+	var scene_credits=director.createScene();
+	var scene=director.createScene();
+	
+	new CAAT.ImagePreloader().loadImages([
+		{id:'fondjeu',     url:'img/fondjeu.png'},
+		{id:'bateau',     url:'img/bateau.png'},
+		{id:'vague',     url:'img/vague.png'},
+		{id:'cieljour',     url:'img/cieljour.png'},
+		{id:'nuage',     url:'img/nuage.png'},
+		{id:'pluie',     url:'img/pluie.png'},
+		{id:'ovni',     url:'img/ufo.png'},
+		{id:'mer',     url:'img/mer.png'},
+		{id:'pictoshud',     url:'img/pictos_hud.png'},
+		{id:'fondmenu',     url:'img/menu.png'},
+		{id:'menuboutons',     url:'img/menu_boutons.png'},
+		{id:'credits',     url:'img/credits.png'},
+		{id:'cible',     url:'img/cible.png'},
+	],
+	function( counter, images ) {
+		//console.log(counter);
+	    if ( counter==images.length ) {
+	        director.setImagesCache(images);
+	        suite();
+	    }
+	});
+	director.addAudio("tircanon", 'son/canon.ogg');
+	director.addAudio("explosion_ovni", 'son/explosion_ovni.wav');
+	director.addAudio("pluie", 'son/pluie.ogg');
+	director.addAudio("vent", 'son/vent.ogg');
+	director.addAudio("full", 'son/hud_full.wav');
+	director.addAudio("bipmenu", 'son/bipmenu.wav');
+	sonvent=director.audioLoop('vent');
+	sonvent.volume=.1;
+
+	
+	function suite(){
+		//le menu
+		scene_menu.addChild(new CAAT.ActorContainer().create().setBounds(0,0,director.width,director.height).setBackgroundImage(director.getImage('fondmenu'),true).setFrameTime(0,Number.MAX_VALUE));
+		var boutons=new CAAT.SpriteImage().initialize(director.getImage('menuboutons'), 3, 2);
+		var bouton_play=new CAAT.ActorContainer().create().setAsButton(boutons.getRef(), 0, 1, 1, 0, function(){ director.switchToScene(2,500, true, true); }).setPosition(178, 130);
+		bouton_play.mouseEnter=function(){ director.audioPlay('bipmenu');bouton_play.setSpriteIndex(1); };
+		var bouton_credits=new CAAT.ActorContainer().create().setAsButton(boutons.getRef(), 2, 3, 3, 2, function(){ director.switchToScene(1,500, true, true); }).setPosition(178, 150);
+		bouton_credits.mouseEnter=function(){ director.audioPlay('bipmenu');bouton_credits.setSpriteIndex(3); };
+		var bouton_bonus=new CAAT.ActorContainer().create().setAsButton(boutons.getRef(), 4, 5, 5, 4, function(){ document.location.href='http://www.youtube.com/watch?v=oHg5SJYRHA0'; }).setPosition(178, 170);
+		bouton_bonus.mouseEnter=function(){ director.audioPlay('bipmenu');bouton_bonus.setSpriteIndex(5); };
+		scene_menu.addChild(bouton_play);
+		scene_menu.addChild(bouton_credits);
+		scene_menu.addChild(bouton_bonus);
+		
+		//les credits
+		var fondcredits=new CAAT.ActorContainer().create().setBounds(0,0,director.width,director.height).setBackgroundImage(director.getImage('credits'),true).setFrameTime(0,Number.MAX_VALUE);
+		fondcredits.mouseClick=function(){ director.switchToScene(0,500, true, true); };
+		scene_credits.addChild(fondcredits);
+	
+		//la scene de jeu
+		scene.positionZone=function positionZone(){
+			return bateau.position/scenesize*100;
+		}
+		var cont_principal=new CAAT.ActorContainer().setBounds(0,0,director.width,director.height).setFillStyle('#000').setBackgroundImage(director.getImage('fondjeu'), true).enableEvents(false);
+		scene.addChild(cont_principal);
+		
+		//création du jour
+		//console.log(1-(Math.abs(50-positionsoleil))/positionsoleil);
+		var cieljour=new CAAT.Actor().setBackgroundImage(director.getImage('cieljour'),true).setAlpha(1-(Math.abs(50-positionsoleil))/positionsoleil).enableEvents(false);
+		scene.addChild(cieljour);
+		
+		//création du bateau
+		var bateau=new CAAT.Actor().setBackgroundImage(director.getImage('bateau')).setPosition(director.width/2-22, director.height-42-20);
+		bateau.vitesse=0;
+		bateau.distposition=0;
+		bateau.position=0;
+		bateau.pts=[];
+		bateau.pts.vie=100;
+		bateau.pts.eau=50;
+		bateau.pts.food=100;
+		bateau.pts.boulets=100;
+		bateau.nb_canons=4;
+		bateau.souslapluie=false;
+		bateau.score=0;
+		//on le fait flotter
+		var flottement=new CAAT.RotateBehavior().setCycle(true).setPingPong().setFrameTime(0,ROULISPHASE).setInterpolator(new CAAT.Interpolator().createExponentialInOutInterpolator(2, true))
+		.setValues(Math.PI/ROULIS, -Math.PI/ROULIS, .4, 1 );
+		var houle=new CAAT.PathBehavior().setCycle(true).setPingPong().setFrameTime(0,ROULISPHASE).setInterpolator(new CAAT.Interpolator().createExponentialInOutInterpolator(2, true))
+		.setPath(new CAAT.LinearPath().setInitialPosition(bateau.x, bateau.y+1).setFinalPosition(bateau.x,bateau.y-1));
+		var houle2=new CAAT.PathBehavior().setCycle(true).setPingPong().setFrameTime(0,ROULISPHASE).setInterpolator(new CAAT.Interpolator().createExponentialInOutInterpolator(2, true))
+		.setPath(new CAAT.LinearPath().setInitialPosition(bateau.x+2, bateau.y).setFinalPosition(bateau.x,bateau.y));
+		bateau.addBehavior(flottement);
+		bateau.addBehavior(houle);
+		bateau.addBehavior(houle2);
+		scene.addChild(bateau);
+		scene.createTimer(0,Number.MAX_VALUE,
+		           function(scene_time, timer_time, timertask_instance){},
+		           function(scene_time, timer_time, timertask_instance){
+		        	   //fait on non avancer le bateau
+		        	   bateau.navigue();
+		           },
+		           function(scene_time, timer_time, timertask_instance){   // cancel
+		           }
+		   );
+		
+		//on rajoute les vagues // PLUSTARD!!
+		/*var vagues=new CAAT.ActorContainer().setBounds(0,0,director.width,24);
+		//on crée le sprite de vague
+		var vagueSprite=new CAAT.SpriteImage().initialize(director.getImage('vague'), 1, 4);
+		for(index=0;index<=director.width/10;index++){
+			var vague=new CAAT.Actor().setBackgroundImage(vagueSprite.getRef(), true).setPosition(index*10,0).setAnimationImageIndex( [0,1,2,3,2,1] ).setChangeFPS(200);
+			console.log(-((director.width/20)-index)/(director.width/20));
+			vague.setRotationAnchored(-((director.width/20)-index)/(director.width/20)*Math.PI/8,222-index*10,200);//,director.width/2,0);
+			vagues.addChild(vague);
+		}
+		scene.addChild(vagues);*/
+		//var indicateur=new CAAT.TextActor().setText(bateau.vitesse).setPosition(144, 44);
+	
+		bateau.tribord=function tribord(){
+			bateau.setScale(1,1);
+			verslagauche=false;
+		}
+		bateau.babord=function babord(){
+			bateau.setScale(-1,1);
+			verslagauche=true;
+		}
+		bateau.navigue=function navigue(){
+			if(avance){
+				bateau.vitesse+=bateau.vitesse<VITESSEMAX?.05:0;
+				//console.log(avance+" "+bateau.vitesse);
+			}else if(bateau.vitesse>0){
+				bateau.vitesse+=bateau.vitesse>0?-.1:0;
+				if(bateau.vitesse<=.1)
+					bateau.vitesse=0;
+				//console.log(avance+" "+bateau.vitesse);
+			}
+			if(bateau.vitesse>0){
+				//on déplace la scene
+				bateau.distposition+=((verslagauche)?-bateau.vitesse:bateau.vitesse)/FREINDEPLACEMENT;
+				bateau.distposition%=scenesize;
+				if(bateau.distposition<0)
+					bateau.distposition+=scenesize;
+				/*if(bateau.distposition>scenesize/2)
+					bateau.position=scenesize/2-(bateau.distposition-scenesize/2);
+				else
+					bateau.position=bateau.distposition;*/
+				cieljour.setAlpha(1-(Math.abs(scene.positionZone()-positionsoleil))/positionsoleil);
+				//on bouge les nuages
+				nuages1.setPosition((scenesize-bateau.distposition<director.width?scenesize-bateau.distposition:-bateau.distposition),0);
+				nuages2.setPosition(-bateau.distposition+scenesize/2,0);
+				//on met du vent
+				var pc_vitesse=bateau.vitesse/VITESSEMAX;
+				sonvent.volume=pc_vitesse/2;
+				//console.log(pc_vitesse);
+				//on vérifie qu'on ne se trouve pas sous la pluie?
+				var pasdepluie=true;
+				for(var index=0,count=pluiemap.length;index<count;index++){
+					var zonepluie=pluiemap[index];
+					if(zonepluie.zone.id.substr(-1)===scene.getZone(bateau.distposition).id.substr(-1)){
+						var posbateauRelToZone=(zonepluie.zone.id.substr(-1)=='1'?Math.round(bateau.distposition+bateau.x):Math.round(bateau.distposition+bateau.x-scenesize/2));
+						var x_droite=posbateauRelToZone+bateau.width;
+						var x_gauche=posbateauRelToZone;
+						var x_pluie_deb=Math.round(zonepluie.x);
+						var x_pluie_fin=Math.round(zonepluie.x+bateau.width);
+						//console.log(x_droite+" "+x_gauche+" "+x_pluie_deb+" "+x_pluie_fin);
+						if((x_droite>=x_pluie_deb && x_droite<=x_pluie_fin)
+							|| (x_gauche>=x_pluie_deb && x_gauche<=x_pluie_fin)){
+							if(!bateau.souslapluie){
+								bateau.souslapluie=true;
+								sonpluie=director.audioLoop('pluie');
+							}
+							var distance=(50-Math.abs((zonepluie.x+20)-(posbateauRelToZone+bateau.width/2)))/50;
+							sonpluie.volume=distance;
+							//console.log('PLUIE! '+pasdepluie+' '+x_droite+" "+x_gauche+" "+x_pluie_deb+" "+x_pluie_fin+' '+distance);
+							pasdepluie=false;
+							//break;
+						}
+					}
+				}
+				if(bateau.souslapluie && pasdepluie){
+						//console.log('PAS PLUIE! '+x_droite+" "+x_gauche+" "+x_pluie_deb+" "+x_pluie_fin);
+						//en dehors de la pluie
+						sonpluie.volume=0;
+						bateau.souslapluie=false;
+				}
+				//on bouge la zone contenant ovnis et boulets
+				ciel_ovnis1.setPosition((scenesize-bateau.distposition<director.width?scenesize-bateau.distposition+bateau.x:-bateau.distposition+bateau.x),0);
+				ciel_ovnis2.setPosition((ciel_ovnis1.x<0?ciel_ovnis1.x+ciel_ovnis1.width:ciel_ovnis1.x-ciel_ovnis1.width),0);
+			}else{
+				sonvent.volume=.2;
+			}
+			if(bateau.souslapluie){
+				bateau.pts.eau+=(bateau.pts.eau<100?.1:0);
+			}else{
+				bateau.pts.eau-=.01;
+				if(bateau.pts.eau<=0){
+					bateau.pts.eau=0;
+					gameOver();
+				}
+			}
+			if(etat_tire){
+				bateau.tire();
+			}else{
+				//canons.setExpired(director.time);
+			}
+
+			//indicateur.setText(Math.round(bateau.distposition)+" "+(scene.getZone(bateau.distposition).id));
+		}
+		//scene.addChild(indicateur);
+		bateau.tire=function tire(){
+			for(i=0;i<bateau.nb_canons && canons.getNumChildren()<bateau.nb_canons && bateau.pts.boulets>0;i++){
+				var commence=scene.time+Math.random()*500;
+				//console.log(commence);
+				var x_tir=(bateau.width/4)+Math.random()*10;
+				var y_tir=bateau.height-6;
+				var tir_debut_x=x_tir+bateau.distposition-(scene.getZone(bateau.distposition).id=='ciel1'?0:scenesize/2);
+				var explosion=new CAAT.ShapeActor().create().setFillStyle('yellow').setPosition(x_tir, y_tir).setSize(4,4).setFrameTime(commence,CANONTEMPSRECHARGE).setDiscardable(true);
+				var fadeExplosion=new CAAT.AlphaBehavior().setValues(1, 0).setFrameTime(commence, CANONDUREEFLAMME);
+				explosion.addBehavior(fadeExplosion);
+				var fumee=new CAAT.ShapeActor().create().setFillStyle('gray').setPosition(tir_debut_x, y_tir+bateau.y).setSize(4,4).setFrameTime(commence+100,CANONTEMPSRECHARGE*3).setDiscardable(true).enableEvents(false);
+				var fadeFumee=new CAAT.AlphaBehavior().setValues(.5, 0).setFrameTime(commence+100, CANONTEMPSRECHARGE*3);
+				var scaleFumee=new CAAT.ScaleBehavior().setValues(1, 6, 1, 6, 1, 1).setFrameTime(commence+100, CANONTEMPSRECHARGE*3);
+				fumee.addBehavior(scaleFumee).addBehavior(fadeFumee);
+				scene.createTimer(commence,1,function(){ director.audioPlay('tircanon'); });
+				canons.addChild(explosion);
+				scene.addToZone(fumee);
+				//on tire un boulet
+				fadeBoulet=new CAAT.AlphaBehavior().setValues(1, 0).setFrameTime(commence,2000);
+				var boulet=new CAAT.ActorContainer().create().enableEvents(false).setFrameTime(commence,3000).setDiscardable(true).addListener( {
+				    actorLifeCycleEvent : function( actor, event_type, time ) {
+				        if ( event_type==='expired' ) {
+				        	bouletsmap.shift();
+				        }
+				    }
+				} );
+				var b1=new CAAT.ShapeActor().create().setSize(2,2).setFillStyle('#888888').setPosition(0,0).enableEvents(false);
+				var b2=new CAAT.ShapeActor().create().setSize(2,2).setFillStyle('#444444').setPosition(3,0).enableEvents(false);
+				var b3=new CAAT.ShapeActor().create().setSize(2,2).setFillStyle('#000000').setPosition(6,0).enableEvents(false);
+				boulet.addChild(b1);boulet.addChild(b2);boulet.addChild(b3);
+				var zone=scene.getZone(bateau.distposition);
+				var tir_fin_x_droite=x_tir+bateau.x-scene.getZone(bateau.distposition).x+director.width;
+				var tir_fin_x_gauche=x_tir+bateau.x-scene.getZone(bateau.distposition).x-director.width;
+				//var pathTir=new CAAT.CurvePath().setQuadric( x_tir+bateau.x-ciel_ovnis1.x,y_tir+bateau.y,souris.x-ciel_ovnis1.x,souris.y-ciel_ovnis1.y,(souris.x>(director.width/2)?tir_fin_x_droite:tir_fin_x_gauche),souris.y+44);
+				var pathTir=new CAAT.LinearPath().setInitialPosition(tir_debut_x, y_tir+bateau.y).setFinalPosition(souris.x-scene.getZone(bateau.distposition).x,souris.y);
+				//console.log(Math.round(tir_debut_x)+' '+Math.round(tir_fin_x_droite));
+				var cb = new CAAT.ContainerBehavior().setFrameTime(commence, 4000);
+				b1.addBehavior(fadeBoulet);
+				b2.addBehavior(fadeBoulet);
+				b3.addBehavior(fadeBoulet);
+				cb.addBehavior(new CAAT.PathBehavior().setPath(pathTir).setAutoRotate(true).setFrameTime(0,2000));//.setInterpolator(new CAAT.Interpolator().createExponentialOutInterpolator(4,false)));
+				//cb.addBehavior(new CAAT.ScaleBehavior().setValues(1, 0, 1, 0, 0, 0).setFrameTime(0,2000))
+				boulet.addBehavior(cb);
+				boulet.zone=scene.getZone(bateau.distposition);
+				bateau.pts.boulets--;
+				if(bateau.pts.boulets<=0){
+					gameOver();
+				}
+				scene.getZone(bateau.distposition).addChild(boulet);
+				//scene.getZone(bateau.distposition).addChild(new CAAT.ShapeActor().create().setSize(2,2).setFillStyle('#FF0000').setPosition(tir_debut_x,25).enableEvents(false));
+				bouletsmap.push(boulet);
+				//console.log(bouletsmap.length);
+			}
+		}
+		
+		//on crée des nuages
+		var nuages1=new CAAT.ActorContainer().setBounds(0, 0, scenesize/2, director.height).setId('nuages1');
+		var nuages2=new CAAT.ActorContainer().setBounds(scenesize/2, 0, scenesize/2, director.height).setId('nuages2');
+		var pluieSprite=new CAAT.SpriteImage().initialize(director.getImage('pluie'), 1, 11);
+		var distort;
+		var nuage;
+		for(index=0;index<NBNUAGES;index++){
+			distort=(Math.random()>.5?-1:1)*(Math.random()*0.5+0.5);
+			var xnuage=(Math.random()*scenesize/2-141);
+			nuage=new CAAT.Actor().setBackgroundImage(director.getImage('nuage'), true).setPosition(xnuage,director.height/4);
+			nuage.setScaleAnchored(distort,Math.abs(distort),.5,1).setAlpha(distort).enableDrag();
+			if(Math.random()>.7){
+				//nuage qui pleut
+			    var zonepluie=new CAAT.ActorContainer().setPosition(nuage.x+nuage.width/2, nuage.y+nuage.height-2);//.setBackgroundImage(pluieSprite.getRef(),false).setChangeFPS(100).setAnimationImageIndex( [0,1,2,3,4,5,6,7,8,9,10] );
+			    zonepluie.paint=function(director,time){
+			    	 var ctx=director.ctx;
+			    	 ctx.strokeStyle='rgb(144,188,144)';
+			         ctx.beginPath();
+			         ctx.lineWidth=.5;
+			         ctx.lineCap='round';
+			         for(i=0;i<10;i++){
+				         ctx.moveTo(i*4, 1);
+				         ctx.lineTo(-10+i*4, zonepluie.y+100);
+			         }
+			         ctx.stroke();
+			    }
+			    zonepluie.zone=index%2?nuages1:nuages2;
+				zonepluie.zone.addChild(zonepluie);
+				pluiemap.push(zonepluie);
+			}
+			//console.log("+nuage "+nuage.x );
+			index%2? nuages1.addChild(nuage):nuages2.addChild(nuage);
+		}
+		scene.addChild(nuages1);
+		scene.addChild(nuages2);
+		
+		//on crée le hud
+		var bar_width=33;
+		var hud=new CAAT.ActorContainer().create().setBounds(4,bar_width,44,20).enableEvents(false);
+		var hudShape=new CAAT.ActorContainer().create().enableEvents(false);
+		hudShape.paint=function(director,time){
+			var ctx=director.ctx;
+			ctx.fillStyle = '#F00';  
+			ctx.fillRect(1,1,bar_width*bateau.pts.vie/100,5);
+			ctx.fillStyle = '#0FF';  
+			ctx.fillRect(1,7,bar_width*bateau.pts.eau/100,5);
+			ctx.fillStyle = '#BBB';  
+			ctx.fillRect(1,13,bar_width*bateau.pts.food/100,5);
+			ctx.strokeStyle='rgb(255,255,255)';
+			ctx.beginPath();
+			ctx.lineWidth=2;
+			ctx.lineCap='square';
+			ctx.lineJoin='mitter';
+			ctx.moveTo(0, 0);
+			ctx.lineTo(bar_width+1, 0);
+			ctx.lineTo(bar_width+1, 18);
+			ctx.lineTo(0, 18);
+			ctx.lineTo(0, 0);
+			ctx.moveTo(0, 6);
+			ctx.lineTo(bar_width+1, 6);
+			ctx.moveTo(0, 12);
+			ctx.lineTo(bar_width+1, 12);
+			ctx.stroke();
+			ctx.fillStyle = "white"; 
+			ctx.font = "8pt Arial";
+			ctx.fillText(bateau.pts.boulets, 4, 29); 
+		}
+		hud.addChild(hudShape);
+		hud.addChild(new CAAT.Actor().create().setBounds(37,0,1,1).setBackgroundImage(director.getImage('pictoshud'),true).enableEvents(false));
+		
+		scene.addChild(hud);
+		
+		
+		//on gère les méchants
+		var ciel_ovnis1=new CAAT.ActorContainer().setBounds(bateau.x, 0, scenesize/2, director.height).setId('ciel1');
+		//ciel_ovnis1.addChild(new CAAT.ShapeActor().create().setPosition(0,0).setSize(10,10).setFillStyle('green'));
+		//ciel_ovnis1.addChild(new CAAT.ShapeActor().create().setPosition(ciel_ovnis1.width,0).setSize(10,10).setFillStyle('green'));
+		var ciel_ovnis2=new CAAT.ActorContainer().setBounds(-scenesize/2+bateau.x, 0, scenesize/2, director.height).setId('ciel2');
+		//ciel_ovnis2.addChild(new CAAT.ShapeActor().create().setPosition(0,10).setSize(10,10).setFillStyle('red'));
+		//ciel_ovnis2.addChild(new CAAT.ShapeActor().create().setPosition(ciel_ovnis2.width,10).setSize(10,10).setFillStyle('red'));
+		scene.getZone=function getZone(position){
+			return position<(scenesize/2) ? ciel_ovnis1 : ciel_ovnis2;
+		}
+		scene.addToZone=function addToZone(actor){
+			if(actor.x>=scenesize/2){
+				actor.x-=scenesize/2;
+				ciel_ovnis2.addChild(actor);
+				actor.zone=ciel_ovnis2;
+				//console.log(actor.x);
+			}else{
+ 				ciel_ovnis1.addChild(actor);
+				actor.zone=ciel_ovnis1;
+			}
+		}
+
+		var ovniSprite=new CAAT.SpriteImage().initialize(director.getImage('ovni'), 1, 1);
+		var ovnis_manager=function ovnis_manager(){
+			var ovnis=[];
+			var rebuild_ovnis_tab=function rebuild_ovnis_tab(element, index, array) {  
+				return element.expired==false;
+			}
+			scene.createTimer(0,1000,
+				function timeout(scene_time, timer_time, timertask_instance){
+					timertask_instance.reset(scene_time);
+					if(scene_time%niveau.ovnis.intervalle<=1000 && ovnis.length<niveau.ovnis.max){
+						//on envoie un ovni
+						var ovni_x=Math.random()*scenesize;
+						var ovni=new CAAT.ActorContainer().setFrameTime(scene_time,Number.MAX_VALUE).setBackgroundImage(ovniSprite, true).setPosition(ovni_x,0).addListener( {
+						    actorLifeCycleEvent : function( actor, event_type, time ) {
+						        if ( event_type==='expired' ) {
+						        	var explosion=new CAAT.ShapeActor().create().setFillStyle('white').setPosition(actor.x, actor.y).setSize(actor.width,actor.height).setFrameTime(scene.time,1000).setDiscardable(true);
+									var fadeExplosion=new CAAT.AlphaBehavior().setValues(1, 0).setFrameTime(scene.time, 400);
+									var scaleExplosion=new CAAT.ScaleBehavior().setValues(1, 4,1,4,.5,.5).setFrameTime(scene.time, 500).setPingPong(true);
+									explosion.addBehavior(fadeExplosion);
+									explosion.addBehavior(scaleExplosion);
+									actor.zone.addChild(explosion);
+									var avant=ovnis.length;
+									ovnis=ovnis.filter(rebuild_ovnis_tab);
+									bateau.score+=(avant-ovnis.length);
+									//niveau.ovnis.max+=(avant-ovnis.length);
+									//console.log(ovnis);
+						        }
+						    }
+						} );
+						scene.addToZone(ovni);
+						var path=new CAAT.LinearPath().setInitialPosition(ovni.x,ovni.y).setFinalPosition(ovni.x,ovni.y+144);
+						var path_behavior= new CAAT.PathBehavior().setPath( path ).setFrameTime(scene_time,niveau.ovnis.tempsapproche).setCycle(false).setAutoRotate(false).setInterpolator(new CAAT.Interpolator().createExponentialOutInterpolator(4,false));
+						ovni.addBehavior(path_behavior);
+						ovni.vie=100;
+						ovnis.push(ovni);
+						//console.log('+ovni '+ovni_x+' '+ovnis.length);
+					}
+				},
+			    function tick(scene_time, timer_time, timertask_instance){
+					var nbchilds=ovnis.length;
+					var ovni;
+					for(index=0;index<nbchilds;index++){
+						ovni=ovnis[index];
+						for(var index=0,count=bouletsmap.length;index<count;index++){
+							var boulet=bouletsmap[index];
+							//console.log(Math.round(boulet.x)+' -- '+Math.round(ovni.x));
+							var xboulet=Math.round(boulet.x);
+							var yboulet=Math.round(boulet.y);
+							if(xboulet>=Math.round(ovni.x) && xboulet<=Math.round(ovni.x+ovni.width) && yboulet>=Math.round(ovni.y) && yboulet<=Math.round(ovni.y+ovni.height)){
+								var impact=new CAAT.ShapeActor().create().setFillStyle('yellow').setPosition(xboulet, yboulet).setSize(1,1).setFrameTime(scene_time,100).setDiscardable(true);
+								boulet.zone.addChild(impact);
+								//console.log(boulet.zone.id);
+								director.audioPlay('explosion_ovni');
+								ovni.vie--;
+								ovni.setRotation(Math.random()*0.5-0.25);
+								if(ovni.vie<=0)
+									ovni.setExpired(true);
+							}
+						}
+					}
+				},
+				function cancel(scene_time, timer_time, timertask_instance){});
+		};
+		ovnis_manager();
+		
+		/*for(i=0;i<scenesize/2;i+=100){
+			var ovni=new CAAT.Actor().setFrameTime(0,Number.MAX_VALUE).setBackgroundImage(ovniSprite, true).setPosition(i,0);
+			var path=new CAAT.LinearPath().setInitialPosition(ovni.x,ovni.y).setFinalPosition(ovni.x,ovni.y+144);
+			var path_behavior= new CAAT.PathBehavior().setPath( path ).setFrameTime(0,5000).setCycle(false).setAutoRotate(false);
+			ovni.addBehavior(path_behavior);
+			ciel_ovnis1.addChild(ovni);
+		}
+		for(i=0;i<scenesize/2;i+=100){
+			var ovni=new CAAT.Actor().setFrameTime(0,Number.MAX_VALUE).setBackgroundImage(ovniSprite, true).setPosition(i,0);
+			var path=new CAAT.LinearPath().setInitialPosition(ovni.x,ovni.y).setFinalPosition(ovni.x,ovni.y+144);
+			var path_behavior= new CAAT.PathBehavior().setPath( path ).setFrameTime(0,5000).setCycle(false).setAutoRotate(false);
+			ovni.addBehavior(path_behavior);
+			ciel_ovnis2.addChild(ovni);
+		}*/
+		
+		scene.addChild(ciel_ovnis1);
+		scene.addChild(ciel_ovnis2);
+		
+		//on affiche le score
+		var score=new CAAT.ShapeActor().create().setBounds(0, 0, 10, 10).enableEvents(false);
+		score.paint=function(director,time){
+			var ctx=director.ctx;
+			ctx.fillStyle = "yellow"; 
+			ctx.font = "18pt Arial";
+			ctx.fillText(bateau.score, 1, 20); 
+		}
+		scene.addChild(score);
+		
+		//on gere le tir du heros
+		var zoneTir=new CAAT.ActorContainer().create().setBounds(0, 0, director.width, director.height);
+		var cible=new CAAT.ActorContainer().create().setBackgroundImage(director.getImage('cible'),true).enableEvents(false);
+		zoneTir.mouseMove=function(e){ cible.centerAt(e.x, e.y);souris=e; };
+		zoneTir.mouseDrag=zoneTir.mouseMove;
+		zoneTir.mouseDown=function(e){
+			etat_tire=true;
+		};
+		zoneTir.mouseUp=function(e){
+			etat_tire=false;
+		};
+		zoneTir.addChild(cible);
+		scene.addChild(zoneTir);
+		var canons=new CAAT.ActorContainer().create().enableEvents(false).setBounds(bateau.x,bateau.y,bateau.width,bateau.height);
+		scene.addChild(canons);
+		
+		//on rajoute la mer au premier plan
+		var mer=new CAAT.ActorContainer().create().setBounds(0, director.height-director.getImage('mer').height, director.width, director.getImage('mer').height)
+		.setBackgroundImage(director.getImage('mer'), true).enableEvents(false);
+		scene.addChild(mer);
+		
+		//le bouton de retour au menu
+		var bouton_menu=new CAAT.TextActor().create().setText('MENU').setPosition(director.width-36,1);
+		bouton_menu.mouseEnter=function(){ director.audioPlay('bipmenu'); };
+		bouton_menu.mouseClick=function(){ director.switchToScene(0,500,true,true); };
+		scene.addChild(bouton_menu);
+		
+		//on initialise le jour
+		cieljour.setAlpha(1-(Math.abs(scene.positionZone()-positionsoleil))/positionsoleil);
+		
+		function gameOver(){
+			director.switchToScene(0,100,false,false);
+			var resultat=new CAAT.ActorContainer().create().setBounds(44, 44, director.width-88, director.height-88).setFillStyle('black').setStrokeStyle('white').enableEvents(true);
+			resultat.addChild(new CAAT.TextActor().create().setText('GAME OVER').setFont('40pt verdana').setPosition(16,16));
+			resultat.addChild(new CAAT.TextActor().create().setText('Score : '+bateau.score).setFont('24pt verdana').setPosition(16,66));
+			resultat.mouseClick=function(){
+				window.location.reload();
+			}
+			scene_menu.addChild(resultat);
+			//scene.setPaused(true);
+		}
+		//gameOver();
+		
+		//Gestion des touches
+		CAAT.registerKeyListener( function(key) {
+			if(key.action=="down"){
+				//console.log(key.keyCode);
+		        switch(key.keyCode){
+			    	case 37: //gauche
+			        	bateau.babord();
+			    		avance=true;
+			    		break;
+			    	case 39: //droite
+			        	bateau.tribord();
+			    		avance=true;
+			    		break;
+			    	case 38: //haut
+			        	
+			    		break;
+			    	case 40: //bas
+			        	
+			    		break;
+		        }
+			}else if(key.action=="up"){
+				avance=false;
+			}
+	    });
+		
+		director.loop(30);
+	}
+
+})();
+
+</script>
+<div style="width:222px;float:left;border:1px solid silver;">You're one of the last pirate of the universe defending the (tiny) planet where you can find water.<br>
+This is your planet and you love to sail so don't let the aliens suck it all!</div>
+</body>
+</html>
